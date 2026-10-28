@@ -1,0 +1,10 @@
+.git
+docs
+README.md
+web/html/vendor
+web/html/config.php
+web/html/MDS.db
+.vscode
+.phpcs.xml
+docker-compose*.yml
+Dockerfile

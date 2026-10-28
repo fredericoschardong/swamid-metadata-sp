@@ -1,0 +1,83 @@
+x-app-env: &app-env
+  DB_HOST: mariadb
+  DB_NAME: ${DB_NAME:-metadata}
+  DB_USER: ${DB_USER:-metadata_admin}
+  DB_PASSWORD: ${DB_PASSWORD:-adminpwd}
+  SMTP_HOST: smtp4dev
+  APP_MODE: ${APP_MODE:-Lab}
+  BASE_URL: ${BASE_URL:-http://localhost:8080/}
+  ADMIN_USERS: ${ADMIN_USERS:-admin@example.org}
+
+x-app-volumes: &app-volumes
+  # Which federation this instance runs: docker/dev-config/<CONFIG_FILE>
+  - ./docker/dev-config/${CONFIG_FILE:-config.sunet.php}:/var/www/html/config.php:ro
+  # Federation metadata files (metadata_main_path in config.php)
+  - metadata:/opt/metadata
+
+services:
+  mariadb:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpwd}
+      MARIADB_DATABASE: ${DB_NAME:-metadata}
+      MARIADB_USER: ${DB_USER:-metadata_admin}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-adminpwd}
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  smtp4dev:
+    image: rnwood/smtp4dev:v3
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${SMTP4DEV_PORT:-8025}:80"
+    volumes:
+      - smtp4dev-data:/smtp4dev
+
+  app:
+    build: .
+    image: swamid-metadata-sp:dev
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      smtp4dev:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:80"
+    environment:
+      <<: *app-env
+      # Local development only: fakes the Shibboleth login for /admin.
+      # Remove (or leave empty) when running behind a real SSO.
+      DEV_EPPN: ${DEV_EPPN:-admin@example.org}
+    volumes: *app-volumes
+
+  # One-shot: downloads the federation metadata (federation.metadata_url in the config) and loads
+  # the entities into the database on first start. Re-run: docker compose run --rm seed
+  # SEED_METADATA=0 disables it, SEED_FORCE=1 reimports.
+  seed:
+    image: swamid-metadata-sp:dev
+    entrypoint: ["/usr/local/bin/seed.sh"]
+    user: www-data
+    restart: "no"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      app:
+        condition: service_started
+    environment:
+      <<: *app-env
+      SEED_METADATA: ${SEED_METADATA:-1}
+      SEED_FORCE: ${SEED_FORCE:-0}
+      SEED_ALL: ${SEED_ALL:-0}
+    volumes: *app-volumes
+
+volumes:
+  smtp4dev-data:
+  db-data:
+  metadata:
